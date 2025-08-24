@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { User, UserRole } from '@prisma/client'
+import { User } from '@prisma/client'
 import { LoginForm } from '@/components/auth/LoginForm'
 import { SignupForm } from '@/components/auth/SignupForm'
 import { TouristDashboard } from '@/components/dashboard/TouristDashboard'
@@ -11,6 +11,10 @@ import { CouncilDashboard } from '@/components/dashboard/CouncilDashboard'
 import { FinanceDashboard } from '@/components/dashboard/FinanceDashboard'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 
+// Force dynamic rendering to prevent static generation issues
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export default function HomePage() {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -18,14 +22,26 @@ export default function HomePage() {
   const router = useRouter()
 
   useEffect(() => {
-    // Check for existing auth token
-    const token = localStorage.getItem('accessToken')
-    if (token) {
-      // Validate token and get user info
-      fetchUserProfile(token)
-    } else {
-      setIsLoading(false)
+    // Check for existing auth token safely
+    const checkAuth = async () => {
+      try {
+        if (typeof window !== 'undefined') {
+          const token = localStorage.getItem('accessToken')
+          if (token) {
+            await fetchUserProfile(token)
+          } else {
+            setIsLoading(false)
+          }
+        } else {
+          setIsLoading(false)
+        }
+      } catch (error) {
+        console.error('Auth check error:', error)
+        setIsLoading(false)
+      }
     }
+
+    checkAuth()
   }, [])
 
   const fetchUserProfile = async (token: string) => {
@@ -40,53 +56,64 @@ export default function HomePage() {
         const userData = await response.json()
         setUser(userData)
       } else {
-        localStorage.removeItem('accessToken')
-        localStorage.removeItem('refreshToken')
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('accessToken')
+          localStorage.removeItem('refreshToken')
+        }
       }
     } catch (error) {
       console.error('Error fetching user profile:', error)
-      localStorage.removeItem('accessToken')
-      localStorage.removeItem('refreshToken')
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('accessToken')
+        localStorage.removeItem('refreshToken')
+      }
     } finally {
       setIsLoading(false)
     }
   }
 
   const handleLoginSuccess = (userData: User, tokens: { accessToken: string; refreshToken: string }) => {
-    localStorage.setItem('accessToken', tokens.accessToken)
-    localStorage.setItem('refreshToken', tokens.refreshToken)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('accessToken', tokens.accessToken)
+      localStorage.setItem('refreshToken', tokens.refreshToken)
+    }
     setUser(userData)
   }
 
   const handleLogout = () => {
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('refreshToken')
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('accessToken')
+      localStorage.removeItem('refreshToken')
+    }
     setUser(null)
     router.push('/')
   }
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <LoadingSpinner size="lg" />
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <LoadingSpinner size="xl" />
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
       </div>
     )
   }
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-primary-100">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
         <div className="max-w-md w-full mx-4">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-primary-900 mb-2">
-              Waste Management
+            <h1 className="text-4xl font-bold text-blue-900 mb-2">
+              🌱 Waste Management
             </h1>
             <p className="text-gray-600">
               Submit videos and earn rewards for proper waste disposal
             </p>
           </div>
 
-          <div className="card">
+          <div className="bg-white rounded-lg shadow-lg p-6">
             {showSignup ? (
               <SignupForm 
                 onSuccess={handleLoginSuccess}
@@ -126,3 +153,20 @@ export default function HomePage() {
 
   return renderDashboard()
 }
+Step 2: Execute These Commands in Order
+# 1. Kill all running processes
+pkill -f "npm run dev"
+pkill -f "node"
+
+# 2. Clear all caches
+rm -rf .next
+rm -rf node_modules/.cache
+
+# 3. Verify database is running
+sudo service postgresql status
+
+# 4. If database not running, start it
+sudo service postgresql start
+
+# 5. Start the development server
+npm run dev
