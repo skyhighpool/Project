@@ -1,62 +1,54 @@
-# Waste Management Video Submission System
+# Waste Management Reward System - Indian Edition
 
-A comprehensive video submission and verification system for waste management, built with Next.js, TypeScript, and PostgreSQL.
+A comprehensive video submission and reward system for waste management with Indian payment gateway integration. Users can upload videos of waste disposal, earn points, and cash out through popular Indian payment methods like UPI, Razorpay, Paytm, and PhonePe.
 
-## 🎯 Project Overview
+## 🚀 Features
 
-This system enables users to submit videos of proper waste disposal, earn points for verified submissions, and cash out rewards. It includes role-based access control for tourists, moderators, city council members, and finance administrators.
+### For Tourists/Citizens
+- **Video Upload**: Submit videos of waste disposal with GPS validation
+- **Auto-Verification**: AI-powered scoring system for instant approval
+- **Points System**: Earn points for approved submissions (1 point = ₹0.10)
+- **Multiple Payment Methods**: Cash out via UPI, Razorpay, Paytm, PhonePe, or bank transfer
+- **Real-time Status**: Track submission and payout status
+- **Notifications**: Email/SMS alerts for decisions and payouts
 
-## ✨ Features
+### For Moderators
+- **Review Queue**: Efficient video review interface with metadata
+- **Fraud Detection**: Duplicate video detection, GPS validation, rate limiting
+- **Audit Trail**: Complete action logging for transparency
+- **Bulk Operations**: Approve/reject multiple submissions
 
-### Tourist Features
-- **Video Upload**: Drag & drop video submission with GPS coordinates
-- **Profile & Wallet**: Track points balance and earnings
-- **Submission Status**: Monitor video review progress
-- **Cash Out**: Convert points to real money via multiple payment methods
-- **Notifications**: Real-time updates on submissions and payouts
+### For Finance Team
+- **Payout Management**: Process cashout requests through payment gateways
+- **Transaction Tracking**: Monitor payment status and webhook handling
+- **Reconciliation**: Automated payment verification and reporting
 
-### Moderator Features
-- **Review Queue**: Efficient video review interface with video player
-- **Auto-Verification**: AI-powered scoring system with manual override
-- **Fraud Detection**: Duplicate detection, GPS validation, rate limiting
-- **Audit Trail**: Complete action logging for compliance
-
-### Admin Features
-- **Dashboard Analytics**: Participation metrics, location heatmaps
-- **Payment Processing**: Automated payout management
-- **Reporting**: Export data for city council analysis
-- **System Configuration**: Adjust scoring thresholds and rules
+### For City Council
+- **Analytics Dashboard**: Participation metrics, geographic heatmaps
+- **Financial Reports**: Payout totals, cost per kg/item analysis
+- **Export Capabilities**: CSV exports and scheduled reports
+- **Zone-wise Insights**: Performance by geographic areas
 
 ## 🏗️ Architecture
 
-### Frontend
-- **Next.js 14** with App Router
-- **TypeScript** for type safety
-- **Tailwind CSS** for styling
-- **React Hook Form** with Zod validation
-- **Lucide React** for icons
+- **Frontend**: Next.js 14 with TypeScript, Tailwind CSS
+- **Backend**: Next.js API routes with Prisma ORM
+- **Database**: PostgreSQL with row-level security
+- **Storage**: AWS S3 for video and thumbnail storage
+- **Queue**: Redis + BullMQ for background processing
+- **Payments**: Razorpay, Paytm, PhonePe, UPI integration
+- **Auth**: NextAuth.js with JWT
+- **Maps**: OpenStreetMap for bin locations
 
-### Backend
-- **Node.js** with Next.js API routes
-- **PostgreSQL** with Prisma ORM
-- **Redis** for caching and job queues
-- **AWS S3** for video storage
-- **FFmpeg** for video processing
+## 📋 Prerequisites
 
-### Key Workflows
-1. **Video Submission**: Upload → Processing → Scoring → Auto-Review/Manual Review
-2. **Points System**: Approved videos → Points → Wallet → Cash Out
-3. **Payment Flow**: Request → Processing → Gateway → Webhook → Completion
-
-## 🚀 Getting Started
-
-### Prerequisites
 - Node.js 18+ 
 - PostgreSQL 14+
 - Redis 6+
-- FFmpeg (for video processing)
+- AWS S3 bucket
+- Indian payment gateway accounts (Razorpay, Paytm, PhonePe)
 
-### Installation
+## 🛠️ Installation
 
 1. **Clone the repository**
    ```bash
@@ -69,13 +61,19 @@ This system enables users to submit videos of proper waste disposal, earn points
    npm install
    ```
 
-3. **Environment Setup**
+3. **Set up environment variables**
    ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
+   cp .env.example .env.local
    ```
+   
+   Configure the following in `.env.local`:
+   - Database connection
+   - Redis connection
+   - AWS S3 credentials
+   - Payment gateway credentials
+   - Email/SMS settings
 
-4. **Database Setup**
+4. **Set up the database**
    ```bash
    # Generate Prisma client
    npm run db:generate
@@ -83,224 +81,243 @@ This system enables users to submit videos of proper waste disposal, earn points
    # Run migrations
    npm run db:migrate
    
-   # Seed initial data (optional)
+   # Seed initial data
    npm run db:seed
    ```
 
-5. **Start Development Server**
+5. **Start Redis server**
+   ```bash
+   # On macOS with Homebrew
+   brew install redis
+   brew services start redis
+   
+   # On Ubuntu
+   sudo apt-get install redis-server
+   sudo systemctl start redis
+   ```
+
+6. **Start the development server**
    ```bash
    npm run dev
    ```
 
-### Environment Variables
+## 🔧 Configuration
 
-```env
-# Database
-DATABASE_URL="postgresql://username:password@localhost:5432/waste_management"
+### Payment Gateway Setup
 
-# JWT Authentication
-JWT_SECRET="your-super-secret-jwt-key-here"
-JWT_REFRESH_SECRET="your-super-secret-refresh-key-here"
+#### Razorpay
+1. Create account at [razorpay.com](https://razorpay.com)
+2. Get API keys from dashboard
+3. Configure webhook endpoint: `https://yourdomain.com/api/webhooks/razorpay`
 
-# AWS S3
-AWS_ACCESS_KEY_ID="your-aws-access-key"
-AWS_SECRET_ACCESS_KEY="your-aws-secret-key"
-AWS_REGION="us-east-1"
-AWS_S3_BUCKET="your-waste-management-bucket"
+#### Paytm
+1. Register at [paytm.com/business](https://paytm.com/business)
+2. Complete KYC and get merchant credentials
+3. Set up webhook for payout status
 
-# Redis
-REDIS_URL="redis://localhost:6379"
+#### PhonePe
+1. Sign up at [phonepe.com/business](https://phonepe.com/business)
+2. Get merchant ID and salt keys
+3. Configure callback URLs
 
-# Stripe Payments
-STRIPE_SECRET_KEY="sk_test_..."
-STRIPE_WEBHOOK_SECRET="whsec_..."
-STRIPE_PUBLISHABLE_KEY="pk_test_..."
-```
+### AWS S3 Setup
+1. Create S3 bucket in `ap-south-1` region
+2. Configure CORS policy for video uploads
+3. Set up IAM user with S3 permissions
 
-## 📁 Project Structure
+### Database Setup
+1. Create PostgreSQL database
+2. Configure connection string
+3. Run migrations to create tables
 
-```
-├── app/                    # Next.js App Router
-│   ├── globals.css        # Global styles
-│   ├── layout.tsx         # Root layout
-│   └── page.tsx           # Main page
-├── components/            # React components
-│   ├── auth/             # Authentication forms
-│   ├── dashboard/        # Role-based dashboards
-│   ├── layout/           # Layout components
-│   ├── ui/               # Reusable UI components
-│   ├── video/            # Video-related components
-│   ├── submissions/      # Submission management
-│   ├── wallet/           # Wallet and points
-│   └── cashout/          # Cash out functionality
-├── lib/                  # Utility libraries
-│   ├── auth.ts           # Authentication utilities
-│   ├── db.ts             # Database connection
-│   └── video-processing.ts # Video processing logic
-├── prisma/               # Database schema and migrations
-│   └── schema.prisma     # Prisma schema
-├── types/                # TypeScript type definitions
-│   └── index.ts          # Main types
-├── utils/                 # Utility functions
-│   └── cn.ts             # Class name utilities
-└── package.json          # Dependencies and scripts
-```
+## 📊 Database Schema
 
-## 🔧 Development
+### Core Tables
+- `users` - User accounts with roles
+- `user_wallets` - Points and cash balances
+- `bin_locations` - Waste bin coordinates and radius
+- `video_submissions` - Video metadata and status
+- `submission_events` - Audit trail for all actions
+- `cashout_requests` - Payout requests
+- `payout_transactions` - Payment gateway transactions
 
-### Available Scripts
+### Key Relationships
+- Users have wallets and submissions
+- Submissions are linked to bin locations
+- Cashouts create payout transactions
+- All actions are logged in events table
 
-```bash
-npm run dev          # Start development server
-npm run build        # Build for production
-npm run start        # Start production server
-npm run lint         # Run ESLint
-npm run db:migrate   # Run database migrations
-npm run db:generate  # Generate Prisma client
-npm run db:seed      # Seed database with sample data
-```
+## 🔐 Security Features
 
-### Database Schema
-
-The system uses PostgreSQL with the following core tables:
-
-- **users**: User accounts with role-based access
-- **user_wallets**: Points and cash balances
-- **video_submissions**: Video metadata and status
-- **bin_locations**: Designated waste disposal areas
-- **submission_events**: Audit trail for all actions
-- **cashout_requests**: Payment requests and status
-- **payout_transactions**: Payment gateway integration
-
-### API Endpoints
-
-#### Public (Auth Required)
-- `POST /api/auth/login` - User authentication
-- `POST /api/auth/signup` - User registration
-- `GET /api/auth/me` - Get current user profile
-- `POST /api/submissions` - Create video submission
-- `GET /api/submissions` - List user submissions
-- `POST /api/cashouts` - Request cash out
-- `GET /api/cashouts` - List cash out requests
-
-#### Admin Only
-- `GET /api/admin/submissions` - Review queue
-- `POST /api/admin/submissions/:id/approve` - Approve submission
-- `POST /api/admin/submissions/:id/reject` - Reject submission
-- `GET /api/admin/reports` - Analytics and reporting
-
-## 🎨 UI Components
-
-### Design System
-- **Color Palette**: Primary, success, warning, and danger variants
-- **Typography**: Inter font family with consistent sizing
-- **Spacing**: 4px base unit system
-- **Components**: Button, Input, Card, Badge, and more
-
-### Responsive Design
-- Mobile-first approach
-- Breakpoints: sm (640px), md (768px), lg (1024px), xl (1280px)
-- Flexible grid system with auto-fit columns
-
-## 🔒 Security Features
-
-- **JWT Authentication** with refresh tokens
-- **Role-based Access Control** (RBAC)
-- **Input Validation** with Zod schemas
-- **SQL Injection Protection** via Prisma ORM
-- **File Upload Security** with type and size validation
-- **Rate Limiting** to prevent abuse
-- **Audit Logging** for compliance
-
-## 📊 Scoring System
-
-### Auto-Verification Criteria
-- **Geographic Score**: Proximity to designated bins
-- **Time Score**: Recording timestamp validity
-- **Duration Score**: Video length requirements
-- **Duplicate Score**: Fraud detection and rate limiting
-
-### Thresholds
-- **Auto-Approve**: Score ≥ 0.8
-- **Human Review**: Score 0.3 - 0.8
-- **Auto-Reject**: Score < 0.3
+- **Row-level security** in PostgreSQL
+- **JWT authentication** with refresh tokens
+- **Role-based access control** (Tourist, Moderator, Finance, Council)
+- **Webhook signature verification** for payment gateways
+- **Rate limiting** on API endpoints
+- **Input validation** with Zod schemas
+- **Audit logging** for all admin actions
 
 ## 🚀 Deployment
 
-### Production Build
+### Production Setup
+
+1. **Environment Variables**
+   ```bash
+   # Set production environment variables
+   NODE_ENV=production
+   DATABASE_URL="postgresql://..."
+   REDIS_URL="redis://..."
+   ```
+
+2. **Database Migration**
+   ```bash
+   npm run db:migrate:deploy
+   ```
+
+3. **Build Application**
+   ```bash
+   npm run build
+   npm start
+   ```
+
+### Docker Deployment
 ```bash
-npm run build
-npm run start
+# Build image
+docker build -t waste-management-system .
+
+# Run container
+docker run -p 3000:3000 waste-management-system
 ```
 
-### Environment Considerations
-- Set `NODE_ENV=production`
-- Configure production database and Redis
-- Set up proper SSL certificates
-- Configure CDN for video delivery
-- Set up monitoring and logging
+### Vercel Deployment
+1. Connect GitHub repository to Vercel
+2. Configure environment variables
+3. Deploy automatically on push to main branch
 
-### Docker Support
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-RUN npm run build
-EXPOSE 3000
-CMD ["npm", "start"]
+## 📱 API Endpoints
+
+### Public APIs (Auth Required)
+- `POST /api/auth/signin` - User login
+- `GET /api/me` - User profile and wallet
+- `POST /api/submissions` - Create video submission
+- `GET /api/submissions` - List user submissions
+- `POST /api/cashouts` - Request cashout
+- `GET /api/cashouts` - List cashout history
+
+### Admin APIs
+- `GET /api/admin/submissions` - Moderation queue
+- `POST /api/admin/submissions` - Approve/reject submissions
+- `GET /api/admin/cashouts` - Finance dashboard
+- `POST /api/admin/cashouts` - Process payouts
+- `GET /api/admin/reports` - Council analytics
+
+### Webhooks
+- `POST /api/webhooks/razorpay` - Razorpay status updates
+- `POST /api/webhooks/paytm` - Paytm status updates
+- `POST /api/webhooks/phonepe` - PhonePe status updates
+
+## 🎯 Auto-Verification Scoring
+
+The system uses a weighted scoring algorithm:
+
+- **GPS Validation (40%)**: Distance from nearest bin
+- **Duration Check (20%)**: Video length validation
+- **File Size (15%)**: File size limits
+- **Duplicate Detection (15%)**: Perceptual hash matching
+- **Time Validation (10%)**: Recording time vs upload time
+
+**Thresholds:**
+- ≥80 points: Auto-approved
+- 50-79 points: Human review required
+- <50 points: Auto-rejected
+
+## 💰 Payment Processing
+
+### Supported Methods
+1. **UPI**: Direct bank transfers via UPI ID
+2. **Razorpay**: UPI, cards, net banking
+3. **Paytm**: Wallet and UPI
+4. **PhonePe**: UPI and wallet
+5. **Bank Transfer**: Direct NEFT/IMPS
+
+### Processing Flow
+1. User requests cashout
+2. Points locked in wallet
+3. Payment gateway processes payout
+4. Webhook confirms status
+5. Points debited on success
+6. Refund on failure
+
+## 📈 Monitoring & Analytics
+
+### Metrics Tracked
+- Daily submission counts
+- Approval rates by zone
+- Payment success rates
+- User engagement metrics
+- Geographic participation heatmaps
+
+### Reporting
+- Real-time dashboards
+- Scheduled email reports
+- CSV exports
+- API endpoints for external tools
+
+## 🔧 Development
+
+### Code Structure
 ```
+├── app/                    # Next.js app directory
+│   ├── api/               # API routes
+│   ├── auth/              # Authentication pages
+│   ├── dashboard/         # User dashboard
+│   └── admin/             # Admin interfaces
+├── components/            # Reusable React components
+├── lib/                   # Utility libraries
+├── prisma/                # Database schema and migrations
+└── types/                 # TypeScript type definitions
+```
+
+### Key Libraries
+- **Prisma**: Database ORM
+- **NextAuth**: Authentication
+- **BullMQ**: Job queues
+- **Zod**: Schema validation
+- **Tailwind**: Styling
+- **Recharts**: Data visualization
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+2. Create feature branch
+3. Make changes with tests
+4. Submit pull request
 
-## 📝 License
+## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.
 
 ## 🆘 Support
 
 For support and questions:
-- Create an issue in the repository
-- Check the documentation
-- Review the code examples
+- Create an issue on GitHub
+- Contact: support@wastemanagement.com
+- Documentation: [docs.wastemanagement.com](https://docs.wastemanagement.com)
 
-## 🔮 Roadmap
+## 🔄 Roadmap
 
-### Phase 1 (Weeks 1-2)
-- [x] Authentication system
-- [x] Basic UI components
-- [x] Database schema
-- [x] Video upload functionality
+### Phase 2 (Q2 2024)
+- Mobile app development
+- ML-powered waste classification
+- Advanced fraud detection
+- Multi-language support
 
-### Phase 2 (Weeks 3-4)
-- [ ] Video processing pipeline
-- [ ] GPS validation
-- [ ] Auto-scoring system
-- [ ] User dashboard
+### Phase 3 (Q3 2024)
+- IoT integration for smart bins
+- Blockchain for transparency
+- Advanced analytics
+- Partner integrations
 
-### Phase 3 (Weeks 5-6)
-- [ ] Moderation interface
-- [ ] Points system
-- [ ] Cash out flow
-- [ ] Payment integration
+---
 
-### Phase 4 (Weeks 7-8)
-- [ ] Admin dashboards
-- [ ] Reporting system
-- [ ] Notifications
-- [ ] Testing and hardening
-
-### Future Enhancements
-- [ ] Mobile PWA
-- [ ] ML-powered fraud detection
-- [ ] Advanced analytics
-- [ ] Multi-language support
-- [ ] API rate limiting
-- [ ] Webhook integrations
+**Built with ❤️ for a cleaner India**

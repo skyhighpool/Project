@@ -1,395 +1,241 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
-import { verifyAccessToken } from '@/lib/auth'
-import { z } from 'zod'
-
-const cashoutSchema = z.object({
-  points: z.number().min(500, 'Minimum 500 points required ($5.00)'),
-  method: z.enum(['BANK_TRANSFER', 'PAYPAL', 'STRIPE', 'CASH']),
-  destinationRef: z.string().min(1, 'Payment destination is required'),
-})
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { PaymentGatewayFactory, PayoutRequestSchema, validateUPI, validateBankAccount } from '@/lib/payment-gateways';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
-    // Get authorization header
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'Authorization header required' },
-        { status: 401 }
-      )
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const token = authHeader.substring(7)
-    const payload = verifyAccessToken(token)
-
-    if (!payload) {
-      return NextResponse.json(
-        { error: 'Invalid or expired token' },
-        { status: 401 }
-      )
-    }
-
-    const body = await request.json()
-    const { points, method, destinationRef } = cashoutSchema.parse(body)
+    const body = await request.json();
+    const validatedData = PayoutRequestSchema.parse({
+      ...body,
+      userId: session.user.id,
+    });
 
     // Get user wallet
     const wallet = await prisma.userWallet.findUnique({
-      where: { userId: payload.userId }
-    })
+      where: { userId: session.user.id },
+    });
 
     if (!wallet) {
-      return NextResponse.json(
-        { error: 'Wallet not found' },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'Wallet not found' }, { status: 404 });
     }
 
     // Check if user has enough points
-    if (wallet.pointsBalance < points) {
-      return NextResponse.json(
-        { error: 'Insufficient points balance' },
-        { status: 400 }
-      )
+    if (wallet.pointsBalance < validatedData.amount) {
+      return NextResponse.json({ error: 'Insufficient points balance' }, { status: 400 });
     }
 
-    // Check if user has pending cashouts that would exceed limit
-    const pendingCashouts = await prisma.cashoutRequest.findMany({
-      where: {
-        userId: payload.userId,
-        status: { in: ['PENDING', 'INITIATED'] }
-      }
-    })
-
-    const totalPendingPoints = pendingCashouts.reduce((sum, cashout) => sum + cashout.pointsUsed, 0)
-    if (wallet.pointsBalance - totalPendingPoints < points) {
-      return NextResponse.json(
-        { error: 'Insufficient available points (some are locked in pending cashouts)' },
-        { status: 400 }
-      )
+    // Validate destination reference based on payment method
+    if (validatedData.method === 'UPI' && !validateUPI(validatedData.destinationRef)) {
+      return NextResponse.json({ error: 'Invalid UPI ID format' }, { status: 400 });
     }
 
-    // Calculate cash amount (1 point = $0.01)
-    const cashAmount = points * 0.01
-
-    // Check minimum cashout amount
-    if (cashAmount < 5.00) {
-      return NextResponse.json(
-        { error: 'Minimum cashout amount is $5.00 (500 points)' },
-        { status: 400 }
-      )
+    if (validatedData.method === 'BANK_TRANSFER' && !validateBankAccount(validatedData.destinationRef)) {
+      return NextResponse.json({ error: 'Invalid bank account number' }, { status: 400 });
     }
+
+    // Calculate cash amount (configurable rate: 1 point = ₹0.10)
+    const pointsToCashRate = 0.10;
+    const cashAmount = validatedData.amount * pointsToCashRate;
 
     // Create cashout request
     const cashoutRequest = await prisma.cashoutRequest.create({
       data: {
-        userId: payload.userId,
-        pointsUsed: points,
+        userId: session.user.id,
+        pointsUsed: validatedData.amount,
         cashAmount,
-        method,
-        destinationRef,
-        status: 'PENDING'
-      }
-    })
+        method: validatedData.method as any,
+        destinationRef: validatedData.destinationRef,
+        status: 'PENDING',
+      },
+    });
 
-    // Lock points in wallet
+    // Lock the points
     await prisma.userWallet.update({
-      where: { userId: payload.userId },
+      where: { userId: session.user.id },
       data: {
-        pointsBalance: {
-          decrement: points
-        },
-        lockedAmount: {
-          increment: cashAmount
-        }
-      }
-    })
+        pointsBalance: { decrement: validatedData.amount },
+        lockedAmount: { increment: cashAmount },
+      },
+    });
 
-    // Create audit event
-    await prisma.submissionEvent.create({
+    // Create payout transaction
+    const payoutTransaction = await prisma.payoutTransaction.create({
       data: {
-        submissionId: '', // Not tied to a specific submission
-        actorId: payload.userId,
-        eventType: 'MODERATED',
-        meta: {
-          action: 'CASHOUT_REQUEST_CREATED',
-          cashoutId: cashoutRequest.id,
-          pointsUsed: points,
-          cashAmount,
-          method,
-          destinationRef
-        }
-      }
-    })
+        cashoutRequestId: cashoutRequest.id,
+        gateway: validatedData.method as any,
+        status: 'INITIATED',
+      },
+    });
 
-    // TODO: Process payment based on method
-    // For now, we'll simulate payment processing
-    setTimeout(async () => {
-      try {
-        // Simulate payment processing
-        const paymentResult = await processPayment(cashoutRequest.id, method, destinationRef, cashAmount)
-        
-        if (paymentResult.success) {
-          // Update cashout status to succeeded
-          await prisma.cashoutRequest.update({
-            where: { id: cashoutRequest.id },
-            data: { status: 'SUCCEEDED' }
-          })
+    // Process payout through payment gateway
+    try {
+      const gateway = PaymentGatewayFactory.createGateway(validatedData.method);
+      const payoutResult = await gateway.createPayout({
+        ...validatedData,
+        amount: cashAmount,
+      });
 
-          // Unlock and transfer funds
-          await prisma.userWallet.update({
-            where: { userId: payload.userId },
-            data: {
-              lockedAmount: {
-                decrement: cashAmount
-              }
-            }
-          })
+      if (payoutResult.success) {
+        // Update transaction with gateway response
+        await prisma.payoutTransaction.update({
+          where: { id: payoutTransaction.id },
+          data: {
+            gatewayTxnId: payoutResult.gatewayTxnId,
+            status: payoutResult.status === 'SUCCESS' ? 'SUCCEEDED' : 'PROCESSING',
+            rawWebhookJson: payoutResult.data,
+          },
+        });
 
-          // Create success event
-          await prisma.submissionEvent.create({
-            data: {
-              submissionId: '',
-              actorId: payload.userId,
-              eventType: 'MODERATED',
-              meta: {
-                action: 'CASHOUT_SUCCEEDED',
-                cashoutId: cashoutRequest.id,
-                paymentResult
-              }
-            }
-          })
-        } else {
-          // Payment failed, refund points
-          await prisma.cashoutRequest.update({
-            where: { id: cashoutRequest.id },
-            data: { 
-              status: 'FAILED',
-              failureReason: paymentResult.error
-            }
-          })
-
-          await prisma.userWallet.update({
-            where: { userId: payload.userId },
-            data: {
-              pointsBalance: {
-                increment: points
-              },
-              lockedAmount: {
-                decrement: cashAmount
-              }
-            }
-          })
-
-          // Create failure event
-          await prisma.submissionEvent.create({
-            data: {
-              submissionId: '',
-              actorId: payload.userId,
-              eventType: 'MODERATED',
-              meta: {
-                action: 'CASHOUT_FAILED',
-                cashoutId: cashoutRequest.id,
-                paymentResult,
-                pointsRefunded: points
-              }
-            }
-          })
-        }
-      } catch (error) {
-        console.error('Payment processing error:', error)
-        
-        // Mark as failed and refund points
+        // Update cashout request status
         await prisma.cashoutRequest.update({
           where: { id: cashoutRequest.id },
-          data: { 
-            status: 'FAILED',
-            failureReason: 'Payment processing error'
-          }
-        })
-
-        await prisma.userWallet.update({
-          where: { userId: payload.userId },
           data: {
-            pointsBalance: {
-              increment: points
+            status: payoutResult.status === 'SUCCESS' ? 'SUCCEEDED' : 'INITIATED',
+          },
+        });
+
+        // If successful, unlock and debit the amount
+        if (payoutResult.status === 'SUCCESS') {
+          await prisma.userWallet.update({
+            where: { userId: session.user.id },
+            data: {
+              lockedAmount: { decrement: cashAmount },
             },
-            lockedAmount: {
-              decrement: cashAmount
-            }
-          }
-        })
-      }
-    }, 5000) // Simulate 5 second processing time
+          });
+        }
 
-    return NextResponse.json({
-      success: true,
-      cashout: {
-        id: cashoutRequest.id,
-        status: cashoutRequest.status,
-        pointsUsed: cashoutRequest.pointsUsed,
-        cashAmount: cashoutRequest.cashAmount,
-        method: cashoutRequest.method,
-        message: 'Cashout request submitted successfully. Points locked and payment processing started.'
-      }
-    }, { status: 201 })
+        return NextResponse.json({
+          success: true,
+          cashoutRequest,
+          payoutTransaction: {
+            ...payoutTransaction,
+            gatewayTxnId: payoutResult.gatewayTxnId,
+            status: payoutResult.status === 'SUCCESS' ? 'SUCCEEDED' : 'PROCESSING',
+          },
+        });
+      } else {
+        // Payout failed, refund points
+        await prisma.userWallet.update({
+          where: { userId: session.user.id },
+          data: {
+            pointsBalance: { increment: validatedData.amount },
+            lockedAmount: { decrement: cashAmount },
+          },
+        });
 
-  } catch (error) {
-    console.error('Create cashout error:', error)
-    
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Invalid input data', details: error.errors },
-        { status: 400 }
-      )
+        await prisma.cashoutRequest.update({
+          where: { id: cashoutRequest.id },
+          data: {
+            status: 'FAILED',
+            failureReason: payoutResult.error,
+          },
+        });
+
+        await prisma.payoutTransaction.update({
+          where: { id: payoutTransaction.id },
+          data: {
+            status: 'FAILED',
+            rawWebhookJson: { error: payoutResult.error },
+          },
+        });
+
+        return NextResponse.json({
+          success: false,
+          error: payoutResult.error,
+        }, { status: 400 });
+      }
+    } catch (gatewayError) {
+      // Gateway error, refund points
+      await prisma.userWallet.update({
+        where: { userId: session.user.id },
+        data: {
+          pointsBalance: { increment: validatedData.amount },
+          lockedAmount: { decrement: cashAmount },
+        },
+      });
+
+      await prisma.cashoutRequest.update({
+        where: { id: cashoutRequest.id },
+        data: {
+          status: 'FAILED',
+          failureReason: gatewayError instanceof Error ? gatewayError.message : 'Gateway error',
+        },
+      });
+
+      await prisma.payoutTransaction.update({
+        where: { id: payoutTransaction.id },
+        data: {
+          status: 'FAILED',
+          rawWebhookJson: { error: gatewayError instanceof Error ? gatewayError.message : 'Gateway error' },
+        },
+      });
+
+      return NextResponse.json({
+        success: false,
+        error: 'Payment gateway error',
+      }, { status: 500 });
     }
-
+  } catch (error) {
+    console.error('Cashout error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
-    )
+    );
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    // Get authorization header
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'Authorization header required' },
-        { status: 401 }
-      )
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const token = authHeader.substring(7)
-    const payload = verifyAccessToken(token)
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get('status');
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const offset = (page - 1) * limit;
 
-    if (!payload) {
-      return NextResponse.json(
-        { error: 'Invalid or expired token' },
-        { status: 401 }
-      )
+    const where: any = { userId: session.user.id };
+    if (status) {
+      where.status = status;
     }
 
-    // Get query parameters
-    const { searchParams } = new URL(request.url)
-    const status = searchParams.get('status')
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '10')
-    const offset = (page - 1) * limit
-
-    // Build where clause
-    const where: any = { userId: payload.userId }
-    if (status && status !== 'all') {
-      where.status = status
-    }
-
-    // Get cashouts with pagination
     const [cashouts, total] = await Promise.all([
       prisma.cashoutRequest.findMany({
         where,
+        include: {
+          payoutTransactions: true,
+        },
         orderBy: { createdAt: 'desc' },
         skip: offset,
-        take: limit
+        take: limit,
       }),
-      prisma.cashoutRequest.count({ where })
-    ])
-
-    const totalPages = Math.ceil(total / limit)
+      prisma.cashoutRequest.count({ where }),
+    ]);
 
     return NextResponse.json({
-      success: true,
-      data: cashouts.map(cashout => ({
-        id: cashout.id,
-        pointsUsed: cashout.pointsUsed,
-        cashAmount: Number(cashout.cashAmount),
-        method: cashout.method,
-        destinationRef: cashout.destinationRef,
-        status: cashout.status,
-        failureReason: cashout.failureReason,
-        createdAt: cashout.createdAt,
-        updatedAt: cashout.updatedAt
-      })),
+      cashouts,
       pagination: {
         page,
         limit,
         total,
-        totalPages
-      }
-    })
-
+        pages: Math.ceil(total / limit),
+      },
+    });
   } catch (error) {
-    console.error('Get cashouts error:', error)
+    console.error('Get cashouts error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
-    )
-  }
-}
-
-/**
- * Simulate payment processing
- * In a real implementation, this would integrate with Stripe, PayPal, etc.
- */
-async function processPayment(
-  cashoutId: string,
-  method: string,
-  destinationRef: string,
-  amount: number
-): Promise<{ success: boolean; error?: string; transactionId?: string }> {
-  // Simulate payment processing with 90% success rate
-  const success = Math.random() > 0.1
-  
-  if (success) {
-    // Simulate successful payment
-    const transactionId = `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    
-    // Create payout transaction record
-    await prisma.payoutTransaction.create({
-      data: {
-        cashoutRequestId: cashoutId,
-        gateway: method === 'STRIPE' ? 'STRIPE' : method === 'PAYPAL' ? 'PAYPAL' : 'BANK',
-        gatewayTxnId: transactionId,
-        status: 'SUCCEEDED',
-        rawWebhookJson: {
-          amount,
-          method,
-          destinationRef,
-          timestamp: new Date().toISOString()
-        }
-      }
-    })
-
-    return { success: true, transactionId }
-  } else {
-    // Simulate failed payment
-    const errors = [
-      'Insufficient funds',
-      'Invalid payment method',
-      'Payment declined',
-      'Network error',
-      'Account verification required'
-    ]
-    
-    const randomError = errors[Math.floor(Math.random() * errors.length)]
-    
-    // Create failed payout transaction record
-    await prisma.payoutTransaction.create({
-      data: {
-        cashoutRequestId: cashoutId,
-        gateway: method === 'STRIPE' ? 'STRIPE' : method === 'PAYPAL' ? 'PAYPAL' : 'BANK',
-        status: 'FAILED',
-        rawWebhookJson: {
-          amount,
-          method,
-          destinationRef,
-          error: randomError,
-          timestamp: new Date().toISOString()
-        }
-      }
-    })
-
-    return { success: false, error: randomError }
+    );
   }
 }
