@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { verifyAccessToken } from '@/lib/auth'
 import { VideoProcessor } from '@/lib/video-processing'
 import { processVideo } from '@/lib/video-processor'
-import { getObjectBuffer } from '@/lib/s3'
+import { enqueueSubmissionJob } from '@/lib/queue'
 import { z } from 'zod'
 
 const schema = z.object({
@@ -62,46 +62,16 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    // Process asynchronously
-    ;(async () => {
-      try {
-        const buffer = await getObjectBuffer(s3Key)
-        const processingResult = await processVideo(buffer, payload.userId, submission.id)
-        if (!processingResult.success) throw new Error(processingResult.error || 'Processing failed')
-
-        await prisma.videoSubmission.update({
-          where: { id: submission.id },
-          data: { thumbKey: processingResult.thumbnailKey, durationS: Math.round(processingResult.metadata!.duration) }
-        })
-
-        const validation = await VideoProcessor.validateSubmission({
-          gpsLat,
-          gpsLng,
-          recordedAt: new Date(recordedAt),
-          deviceHash,
-          durationS: Math.round(processingResult.metadata!.duration),
-          s3Key
-        }, payload.userId)
-
-        const status = VideoProcessor.determineStatus(validation.score.totalScore)
-
-        await prisma.videoSubmission.update({
-          where: { id: submission.id },
-          data: { status, autoScore: validation.score.totalScore }
-        })
-
-        await prisma.submissionEvent.create({
-          data: {
-            submissionId: submission.id,
-            actorId: payload.userId,
-            eventType: status === 'AUTO_VERIFIED' ? 'AUTO_VERIFIED' : 'NEEDS_REVIEW',
-            meta: { score: validation.score, status, s3Key, thumbnailKey: processingResult.thumbnailKey }
-          }
-        })
-      } catch (err) {
-        await prisma.videoSubmission.update({ where: { id: submission.id }, data: { status: 'REJECTED', rejectionReason: 'Processing failed' } })
-      }
-    })()
+    // Enqueue background job
+    await enqueueSubmissionJob({
+      submissionId: submission.id,
+      s3Key,
+      userId: payload.userId,
+      gpsLat,
+      gpsLng,
+      recordedAt,
+      deviceHash
+    })
 
     return NextResponse.json({ success: true, submission: { id: submission.id, status: submission.status } }, { status: 201 })
   } catch (error) {
