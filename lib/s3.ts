@@ -226,3 +226,15 @@ export async function getFileSize(key: string): Promise<number> {
     return 0
   }
 }
+
+/**
+ * Download object as Buffer from S3/MinIO
+ */
+export async function getObjectBuffer(key: string): Promise<Buffer> {
+  const res = await s3
+    .getObject({ Bucket: BUCKET_NAME, Key: key })
+    .promise()
+  const body = res.Body
+  if (!body) throw new Error('Empty S3 object body')
+  return Buffer.isBuffer(body) ? body : Buffer.from(body as any)
+}
