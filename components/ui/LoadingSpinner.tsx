@@ -4,13 +4,11 @@ import { cn } from '@/utils/cn'
 interface LoadingSpinnerProps {
   size?: 'sm' | 'md' | 'lg' | 'xl'
   className?: string
-  color?: 'primary' | 'white' | 'gray'
 }
 
-export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ 
-  size = 'md', 
-  className,
-  color = 'primary'
+export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
+  size = 'md',
+  className
 }) => {
   const sizeClasses = {
     sm: 'h-4 w-4',
@@ -19,18 +17,11 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
     xl: 'h-12 w-12'
   }
 
-  const colorClasses = {
-    primary: 'text-primary-600',
-    white: 'text-white',
-    gray: 'text-gray-600'
-  }
-
   return (
     <svg
       className={cn(
-        'animate-spin',
+        'animate-spin text-gray-400',
         sizeClasses[size],
-        colorClasses[color],
         className
       )}
       xmlns="http://www.w3.org/2000/svg"
