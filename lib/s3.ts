@@ -1,14 +1,17 @@
 import AWS from 'aws-sdk'
 import { Readable } from 'stream'
 
-// Configure AWS
+// Support AWS S3 or MinIO via env
 const s3 = new AWS.S3({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION,
+  endpoint: process.env.S3_ENDPOINT || undefined,
+  region: process.env.S3_REGION || process.env.AWS_REGION || 'us-east-1',
+  accessKeyId: process.env.S3_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.S3_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY,
+  s3ForcePathStyle: (process.env.S3_FORCE_PATH_STYLE || 'false') === 'true'
 })
 
-const BUCKET_NAME = process.env.AWS_S3_BUCKET!
+// Default to new var names but keep backward compatibility
+const BUCKET_NAME = process.env.S3_BUCKET_VIDEOS || process.env.AWS_S3_BUCKET!
 
 export interface S3UploadResult {
   key: string
