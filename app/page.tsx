@@ -153,20 +153,3 @@ export default function HomePage() {
 
   return renderDashboard()
 }
-Step 2: Execute These Commands in Order
-# 1. Kill all running processes
-pkill -f "npm run dev"
-pkill -f "node"
-
-# 2. Clear all caches
-rm -rf .next
-rm -rf node_modules/.cache
-
-# 3. Verify database is running
-sudo service postgresql status
-
-# 4. If database not running, start it
-sudo service postgresql start
-
-# 5. Start the development server
-npm run dev
