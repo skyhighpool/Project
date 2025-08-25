@@ -1,289 +1,439 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Starting database seeding...')
-
-  // Create sample bin locations
-  const binLocations = [
-    {
-      name: 'Central Park Main Entrance',
-      lat: 40.7829,
-      lng: -73.9654,
-      radiusM: 100,
-      active: true
-    },
-    {
-      name: 'Times Square',
-      lat: 40.7580,
-      lng: -73.9855,
-      radiusM: 150,
-      active: true
-    },
-    {
-      name: 'Brooklyn Bridge Park',
-      lat: 40.7021,
-      lng: -73.9969,
-      radiusM: 120,
-      active: true
-    },
-    {
-      name: 'High Line Park',
-      lat: 40.7484,
-      lng: -74.0047,
-      radiusM: 80,
-      active: true
-    },
-    {
-      name: 'Washington Square Park',
-      lat: 40.7308,
-      lng: -73.9973,
-      radiusM: 90,
-      active: true
-    },
-    {
-      name: 'Bryant Park',
-      lat: 40.7536,
-      lng: -73.9832,
-      radiusM: 70,
-      active: true
-    },
-    {
-      name: 'Madison Square Park',
-      lat: 40.7411,
-      lng: -73.9877,
-      radiusM: 60,
-      active: true
-    },
-    {
-      name: 'Union Square Park',
-      lat: 40.7359,
-      lng: -73.9911,
-      radiusM: 85,
-      active: true
-    }
-  ]
-
-  console.log('📍 Creating bin locations...')
-  for (const binData of binLocations) {
-    const bin = await prisma.binLocation.upsert({
-      where: { 
-        name: binData.name 
-      },
-      update: binData,
-      create: binData
-    })
-    console.log(`  ✓ Created/Updated: ${bin.name}`)
-  }
+  console.log('🌱 Starting database seed...');
 
   // Create sample users with different roles
-  const users = [
-    {
-      email: 'tourist@example.com',
-      name: 'John Tourist',
-      role: 'TOURIST' as const
-    },
-    {
-      email: 'moderator@example.com',
-      name: 'Sarah Moderator',
-      role: 'MODERATOR' as const
-    },
-    {
-      email: 'council@example.com',
-      name: 'Mike Council',
-      role: 'COUNCIL' as const
-    },
-    {
-      email: 'finance@example.com',
-      name: 'Lisa Finance',
-      role: 'FINANCE' as const
-    }
-  ]
+  const hashedPassword = await bcrypt.hash('password123', 12);
 
-  console.log('👥 Creating sample users...')
-  for (const userData of users) {
-    const user = await prisma.user.upsert({
-      where: { email: userData.email },
-      update: userData,
-      create: userData
-    })
-
-    // Create wallet for each user
-    await prisma.userWallet.upsert({
-      where: { userId: user.id },
+  const users = await Promise.all([
+    // Tourist users
+    prisma.user.upsert({
+      where: { email: 'tourist1@example.com' },
       update: {},
       create: {
-        userId: user.id,
-        pointsBalance: user.role === 'TOURIST' ? 500 : 0, // Give tourist some points
-        cashBalance: 0,
-        lockedAmount: 0
-      }
-    })
-
-    console.log(`  ✓ Created/Updated: ${user.name} (${user.role})`)
-  }
-
-  // Create some sample video submissions for the tourist
-  const tourist = await prisma.user.findUnique({
-    where: { email: 'tourist@example.com' }
-  })
-
-  if (tourist) {
-    console.log('📹 Creating sample video submissions...')
-    
-    const sampleSubmissions = [
-      {
-        s3Key: 'videos/sample/sample-1.mp4',
-        thumbKey: 'thumbnails/sample/sample-1-thumb.jpg',
-        durationS: 45,
-        sizeBytes: BigInt(15 * 1024 * 1024), // 15MB
-        deviceHash: 'device_hash_sample_1',
-        gpsLat: 40.7829,
-        gpsLng: -73.9654,
-        recordedAt: new Date(Date.now() - 24 * 60 * 60 * 1000), // 1 day ago
-        status: 'APPROVED' as const,
-        autoScore: 0.85,
-        binIdGuess: (await prisma.binLocation.findFirst({ where: { name: 'Central Park Main Entrance' } }))?.id
+        email: 'tourist1@example.com',
+        name: 'Rahul Sharma',
+        role: 'TOURIST',
+        kycStatus: 'VERIFIED',
+        wallet: {
+          create: {
+            pointsBalance: 500,
+            cashBalance: 50.00,
+            lockedAmount: 0,
+          },
+        },
       },
-      {
-        s3Key: 'videos/sample/sample-2.mp4',
-        thumbKey: 'thumbnails/sample/sample-2-thumb.jpg',
-        durationS: 32,
-        sizeBytes: BigInt(12 * 1024 * 1024), // 12MB
-        deviceHash: 'device_hash_sample_2',
-        gpsLat: 40.7580,
-        gpsLng: -73.9855,
-        recordedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
-        status: 'AUTO_VERIFIED' as const,
-        autoScore: 0.92,
-        binIdGuess: (await prisma.binLocation.findFirst({ where: { name: 'Times Square' } }))?.id
+    }),
+    prisma.user.upsert({
+      where: { email: 'tourist2@example.com' },
+      update: {},
+      create: {
+        email: 'tourist2@example.com',
+        name: 'Priya Patel',
+        role: 'TOURIST',
+        kycStatus: 'VERIFIED',
+        wallet: {
+          create: {
+            pointsBalance: 250,
+            cashBalance: 25.00,
+            lockedAmount: 0,
+          },
+        },
       },
-      {
-        s3Key: 'videos/sample/sample-3.mp4',
-        thumbKey: 'thumbnails/sample/sample-3-thumb.jpg',
-        durationS: 28,
-        sizeBytes: BigInt(10 * 1024 * 1024), // 10MB
-        deviceHash: 'device_hash_sample_3',
-        gpsLat: 40.7021,
-        gpsLng: -73.9969,
-        recordedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
-        status: 'NEEDS_REVIEW' as const,
-        autoScore: 0.65,
-        binIdGuess: (await prisma.binLocation.findFirst({ where: { name: 'Brooklyn Bridge Park' } }))?.id
-      }
-    ]
+    }),
+    prisma.user.upsert({
+      where: { email: 'tourist3@example.com' },
+      update: {},
+      create: {
+        email: 'tourist3@example.com',
+        name: 'Amit Kumar',
+        role: 'TOURIST',
+        kycStatus: 'PENDING',
+        wallet: {
+          create: {
+            pointsBalance: 100,
+            cashBalance: 10.00,
+            lockedAmount: 0,
+          },
+        },
+      },
+    }),
 
-    for (const submissionData of sampleSubmissions) {
-      const submission = await prisma.videoSubmission.create({
-        data: {
-          userId: tourist.id,
-          ...submissionData
-        }
+    // Moderator
+    prisma.user.upsert({
+      where: { email: 'moderator@example.com' },
+      update: {},
+      create: {
+        email: 'moderator@example.com',
+        name: 'Sneha Verma',
+        role: 'MODERATOR',
+        kycStatus: 'VERIFIED',
+        wallet: {
+          create: {
+            pointsBalance: 0,
+            cashBalance: 0,
+            lockedAmount: 0,
+          },
+        },
+      },
+    }),
+
+    // Finance admin
+    prisma.user.upsert({
+      where: { email: 'finance@example.com' },
+      update: {},
+      create: {
+        email: 'finance@example.com',
+        name: 'Rajesh Gupta',
+        role: 'FINANCE',
+        kycStatus: 'VERIFIED',
+        wallet: {
+          create: {
+            pointsBalance: 0,
+            cashBalance: 0,
+            lockedAmount: 0,
+          },
+        },
+      },
+    }),
+
+    // Council member
+    prisma.user.upsert({
+      where: { email: 'council@example.com' },
+      update: {},
+      create: {
+        email: 'council@example.com',
+        name: 'Dr. Meera Singh',
+        role: 'COUNCIL',
+        kycStatus: 'VERIFIED',
+        wallet: {
+          create: {
+            pointsBalance: 0,
+            cashBalance: 0,
+            lockedAmount: 0,
+          },
+        },
+      },
+    }),
+  ]);
+
+  console.log('✅ Created users:', users.length);
+
+  // Create sample bin locations (Mumbai coordinates)
+  const binLocations = await Promise.all([
+    prisma.binLocation.upsert({
+      where: { id: 'bin-mumbai-central' },
+      update: {},
+      create: {
+        id: 'bin-mumbai-central',
+        name: 'Mumbai Central Station',
+        lat: 19.0588,
+        lng: 72.8615,
+        radiusM: 100,
+        active: true,
+      },
+    }),
+    prisma.binLocation.upsert({
+      where: { id: 'bin-bandra-west' },
+      update: {},
+      create: {
+        id: 'bin-bandra-west',
+        name: 'Bandra West Market',
+        lat: 19.0596,
+        lng: 72.8295,
+        radiusM: 150,
+        active: true,
+      },
+    }),
+    prisma.binLocation.upsert({
+      where: { id: 'bin-andheri-east' },
+      update: {},
+      create: {
+        id: 'bin-andheri-east',
+        name: 'Andheri East Metro',
+        lat: 19.1197,
+        lng: 72.8464,
+        radiusM: 120,
+        active: true,
+      },
+    }),
+    prisma.binLocation.upsert({
+      where: { id: 'bin-juhu-beach' },
+      update: {},
+      create: {
+        id: 'bin-juhu-beach',
+        name: 'Juhu Beach',
+        lat: 19.0998,
+        lng: 72.8347,
+        radiusM: 200,
+        active: true,
+      },
+    }),
+    prisma.binLocation.upsert({
+      where: { id: 'bin-dadar-station' },
+      update: {},
+      create: {
+        id: 'bin-dadar-station',
+        name: 'Dadar Railway Station',
+        lat: 19.0170,
+        lng: 72.8478,
+        radiusM: 80,
+        active: true,
+      },
+    }),
+    prisma.binLocation.upsert({
+      where: { id: 'bin-borivali-west' },
+      update: {},
+      create: {
+        id: 'bin-borivali-west',
+        name: 'Borivali West Market',
+        lat: 19.2320,
+        lng: 72.8567,
+        radiusM: 100,
+        active: true,
+      },
+    }),
+  ]);
+
+  console.log('✅ Created bin locations:', binLocations.length);
+
+  // Create sample video submissions
+  const sampleSubmissions = [
+    {
+      userId: users[0].id, // Rahul Sharma
+      s3Key: 'videos/sample1.mp4',
+      durationS: 45,
+      sizeBytes: BigInt(15 * 1024 * 1024), // 15MB
+      deviceHash: 'device_hash_001',
+      gpsLat: 19.0588,
+      gpsLng: 72.8615,
+      recordedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
+      binIdGuess: binLocations[0].id,
+      autoScore: 85,
+      status: 'APPROVED',
+    },
+    {
+      userId: users[1].id, // Priya Patel
+      s3Key: 'videos/sample2.mp4',
+      durationS: 30,
+      sizeBytes: BigInt(12 * 1024 * 1024), // 12MB
+      deviceHash: 'device_hash_002',
+      gpsLat: 19.0596,
+      gpsLng: 72.8295,
+      recordedAt: new Date(Date.now() - 4 * 60 * 60 * 1000), // 4 hours ago
+      binIdGuess: binLocations[1].id,
+      autoScore: 92,
+      status: 'APPROVED',
+    },
+    {
+      userId: users[2].id, // Amit Kumar
+      s3Key: 'videos/sample3.mp4',
+      durationS: 60,
+      sizeBytes: BigInt(20 * 1024 * 1024), // 20MB
+      deviceHash: 'device_hash_003',
+      gpsLat: 19.1197,
+      gpsLng: 72.8464,
+      recordedAt: new Date(Date.now() - 1 * 60 * 60 * 1000), // 1 hour ago
+      binIdGuess: binLocations[2].id,
+      autoScore: 65,
+      status: 'NEEDS_REVIEW',
+    },
+    {
+      userId: users[0].id, // Rahul Sharma
+      s3Key: 'videos/sample4.mp4',
+      durationS: 25,
+      sizeBytes: BigInt(8 * 1024 * 1024), // 8MB
+      deviceHash: 'device_hash_004',
+      gpsLat: 19.0998,
+      gpsLng: 72.8347,
+      recordedAt: new Date(Date.now() - 6 * 60 * 60 * 1000), // 6 hours ago
+      binIdGuess: binLocations[3].id,
+      autoScore: 78,
+      status: 'APPROVED',
+    },
+    {
+      userId: users[1].id, // Priya Patel
+      s3Key: 'videos/sample5.mp4',
+      durationS: 15,
+      sizeBytes: BigInt(5 * 1024 * 1024), // 5MB
+      deviceHash: 'device_hash_005',
+      gpsLat: 19.0170,
+      gpsLng: 72.8478,
+      recordedAt: new Date(Date.now() - 3 * 60 * 60 * 1000), // 3 hours ago
+      binIdGuess: binLocations[4].id,
+      autoScore: 45,
+      status: 'REJECTED',
+      rejectionReason: 'Video too short and poor quality',
+    },
+  ];
+
+  const submissions = await Promise.all(
+    sampleSubmissions.map((submission, index) =>
+      prisma.videoSubmission.upsert({
+        where: { id: `sample-submission-${index + 1}` },
+        update: {},
+        create: {
+          id: `sample-submission-${index + 1}`,
+          ...submission,
+        },
       })
+    )
+  );
 
-      // Create submission events
-      await prisma.submissionEvent.create({
+  console.log('✅ Created video submissions:', submissions.length);
+
+  // Create sample events for submissions
+  const events = [];
+  for (const submission of submissions) {
+    // Create event for submission creation
+    events.push(
+      prisma.submissionEvent.create({
         data: {
           submissionId: submission.id,
-          actorId: tourist.id,
+          actorId: submission.userId,
           eventType: 'CREATED',
           meta: {
-            fileSize: Number(submissionData.sizeBytes),
-            duration: submissionData.durationS,
-            deviceHash: submissionData.deviceHash,
-            gpsCoordinates: { lat: submissionData.gpsLat, lng: submissionData.gpsLng }
-          }
-        }
+            autoScore: submission.autoScore,
+            gpsDistance: 25,
+            nearestBin: binLocations.find(bin => bin.id === submission.binIdGuess)?.name,
+            isWithinBinRadius: true,
+            isDuplicate: false,
+            timeDiff: 7200000, // 2 hours
+          },
+        },
       })
+    );
 
-      if (submissionData.status === 'APPROVED' || submissionData.status === 'AUTO_VERIFIED') {
-        await prisma.submissionEvent.create({
+    // Create approval/rejection events
+    if (submission.status === 'APPROVED') {
+      events.push(
+        prisma.submissionEvent.create({
           data: {
             submissionId: submission.id,
-            actorId: tourist.id,
+            actorId: submission.userId,
             eventType: 'APPROVED',
             meta: {
-              autoApproved: submissionData.status === 'AUTO_VERIFIED',
-              score: submissionData.autoScore
-            }
-          }
+              pointsAwarded: 100,
+              autoApproved: submission.autoScore >= 80,
+            },
+          },
         })
-      }
-
-      console.log(`  ✓ Created submission: ${submissionData.status} (${submissionData.durationS}s)`)
+      );
+    } else if (submission.status === 'REJECTED') {
+      events.push(
+        prisma.submissionEvent.create({
+          data: {
+            submissionId: submission.id,
+            actorId: submission.userId,
+            eventType: 'REJECTED',
+            meta: {
+              reason: submission.rejectionReason,
+              autoRejected: submission.autoScore < 50,
+            },
+          },
+        })
+      );
     }
-
-    // Update tourist's wallet with points from approved submissions
-    const approvedSubmissions = await prisma.videoSubmission.count({
-      where: {
-        userId: tourist.id,
-        status: { in: ['APPROVED', 'AUTO_VERIFIED'] }
-      }
-    })
-
-    const pointsEarned = approvedSubmissions * 100
-    await prisma.userWallet.update({
-      where: { userId: tourist.id },
-      data: {
-        pointsBalance: pointsEarned
-      }
-    })
-
-    console.log(`  ✓ Updated tourist wallet: ${pointsEarned} points`)
   }
+
+  await Promise.all(events);
+  console.log('✅ Created submission events:', events.length);
 
   // Create sample cashout requests
-  if (tourist) {
-    console.log('💰 Creating sample cashout requests...')
-    
-    const sampleCashouts = [
-      {
+  const cashoutRequests = await Promise.all([
+    prisma.cashoutRequest.create({
+      data: {
+        userId: users[0].id, // Rahul Sharma
         pointsUsed: 300,
-        cashAmount: 3.00,
-        method: 'BANK_TRANSFER' as const,
-        destinationRef: '1234567890',
-        status: 'SUCCEEDED' as const
+        cashAmount: 30.00,
+        method: 'UPI',
+        destinationRef: 'rahul.sharma@okicici',
+        status: 'SUCCEEDED',
       },
-      {
+    }),
+    prisma.cashoutRequest.create({
+      data: {
+        userId: users[1].id, // Priya Patel
         pointsUsed: 200,
-        cashAmount: 2.00,
-        method: 'PAYPAL' as const,
-        destinationRef: 'tourist@example.com',
-        status: 'PENDING' as const
-      }
-    ]
+        cashAmount: 20.00,
+        method: 'RAZORPAY',
+        destinationRef: 'priya.patel@paytm',
+        status: 'PENDING',
+      },
+    }),
+    prisma.cashoutRequest.create({
+      data: {
+        userId: users[0].id, // Rahul Sharma
+        pointsUsed: 150,
+        cashAmount: 15.00,
+        method: 'BANK_TRANSFER',
+        destinationRef: '1234567890',
+        status: 'INITIATED',
+      },
+    }),
+  ]);
 
-    for (const cashoutData of sampleCashouts) {
-      const cashout = await prisma.cashoutRequest.create({
-        data: {
-          userId: tourist.id,
-          ...cashoutData
-        }
-      })
+  console.log('✅ Created cashout requests:', cashoutRequests.length);
 
-      console.log(`  ✓ Created cashout: ${cashoutData.status} (${cashoutData.pointsUsed} points)`)
-    }
-  }
+  // Create sample payout transactions
+  const payoutTransactions = await Promise.all([
+    prisma.payoutTransaction.create({
+      data: {
+        cashoutRequestId: cashoutRequests[0].id,
+        gateway: 'UPI',
+        gatewayTxnId: 'upi_txn_001',
+        status: 'SUCCEEDED',
+        rawWebhookJson: {
+          upiId: 'rahul.sharma@okicici',
+          amount: 30.00,
+          status: 'SUCCESS',
+          timestamp: new Date().toISOString(),
+        },
+      },
+    }),
+    prisma.payoutTransaction.create({
+      data: {
+        cashoutRequestId: cashoutRequests[2].id,
+        gateway: 'BANK',
+        gatewayTxnId: 'bank_txn_001',
+        status: 'PROCESSING',
+        rawWebhookJson: {
+          accountNumber: '1234567890',
+          amount: 15.00,
+          status: 'PROCESSING',
+          timestamp: new Date().toISOString(),
+        },
+      },
+    }),
+  ]);
 
-  console.log('✅ Database seeding completed successfully!')
-  console.log('\n📊 Sample Data Created:')
-  console.log(`  • ${binLocations.length} bin locations`)
-  console.log(`  • ${users.length} users with different roles`)
-  console.log(`  • 3 sample video submissions`)
-  console.log(`  • 2 sample cashout requests`)
-  console.log('\n🔑 Test Accounts:')
-  console.log('  • Tourist: tourist@example.com (500 points)')
-  console.log('  • Moderator: moderator@example.com')
-  console.log('  • Council: council@example.com')
-  console.log('  • Finance: finance@example.com')
+  console.log('✅ Created payout transactions:', payoutTransactions.length);
+
+  console.log('🎉 Database seeding completed successfully!');
+  console.log('\n📋 Sample Data Created:');
+  console.log(`- ${users.length} users (Tourist, Moderator, Finance, Council)`);
+  console.log(`- ${binLocations.length} bin locations in Mumbai`);
+  console.log(`- ${submissions.length} video submissions`);
+  console.log(`- ${events.length} submission events`);
+  console.log(`- ${cashoutRequests.length} cashout requests`);
+  console.log(`- ${payoutTransactions.length} payout transactions`);
+
+  console.log('\n🔑 Sample Login Credentials:');
+  console.log('Tourist: tourist1@example.com / password123');
+  console.log('Moderator: moderator@example.com / password123');
+  console.log('Finance: finance@example.com / password123');
+  console.log('Council: council@example.com / password123');
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Error during seeding:', e)
-    process.exit(1)
+    console.error('❌ Error seeding database:', e);
+    process.exit(1);
   })
   .finally(async () => {
-    await prisma.$disconnect()
-  })
+    await prisma.$disconnect();
+  });

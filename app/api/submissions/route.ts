@@ -1,315 +1,327 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
-import { verifyAccessToken } from '@/lib/auth'
-import { VideoProcessor } from '@/lib/video-processing'
-import { z } from 'zod'
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { z } from 'zod';
+import { Queue } from 'bullmq';
+import { redis } from '@/lib/redis';
 
-const submissionSchema = z.object({
+// Redis connection for job queue
+const redisConnection = {
+  host: process.env.REDIS_HOST || 'localhost',
+  port: parseInt(process.env.REDIS_PORT || '6379'),
+};
+
+// Create job queue for video processing
+const videoProcessingQueue = new Queue('video-processing', {
+  connection: redisConnection,
+});
+
+// Validation schema for video submission
+const VideoSubmissionSchema = z.object({
+  s3Key: z.string(),
   gpsLat: z.number().min(-90).max(90),
   gpsLng: z.number().min(-180).max(180),
-  recordedAt: z.string().min(1, 'Recording time is required'),
-  deviceHash: z.string().min(1, 'Device hash is required'),
-  durationS: z.number().min(1, 'Duration must be at least 1 second'),
-  sizeBytes: z.number().min(1, 'File size must be greater than 0'),
-})
+  recordedAt: z.string().datetime(),
+  deviceHash: z.string(),
+  duration: z.number().positive(),
+  sizeBytes: z.number().positive(),
+});
+
+// Calculate distance between two GPS coordinates (Haversine formula)
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c * 1000; // Convert to meters
+}
+
+// Auto-verification scoring system
+function calculateAutoScore(
+  gpsDistance: number,
+  duration: number,
+  sizeBytes: number,
+  isDuplicate: boolean,
+  timeDiff: number
+): number {
+  let score = 0;
+  
+  // GPS validation (40% weight)
+  if (gpsDistance <= 50) score += 40; // Within 50m of bin
+  else if (gpsDistance <= 100) score += 30;
+  else if (gpsDistance <= 200) score += 20;
+  else if (gpsDistance <= 500) score += 10;
+  
+  // Duration validation (20% weight)
+  if (duration >= 10 && duration <= 300) score += 20; // 10s to 5min
+  else if (duration >= 5 && duration <= 600) score += 15;
+  else if (duration >= 3 && duration <= 900) score += 10;
+  
+  // File size validation (15% weight)
+  const sizeMB = sizeBytes / (1024 * 1024);
+  if (sizeMB >= 1 && sizeMB <= 100) score += 15; // 1MB to 100MB
+  else if (sizeMB >= 0.5 && sizeMB <= 200) score += 10;
+  
+  // Duplicate check (15% weight)
+  if (!isDuplicate) score += 15;
+  
+  // Time validation (10% weight)
+  const timeDiffHours = Math.abs(timeDiff) / (1000 * 60 * 60);
+  if (timeDiffHours <= 24) score += 10; // Within 24 hours
+  else if (timeDiffHours <= 48) score += 5;
+  
+  return Math.min(score, 100);
+}
 
 export async function POST(request: NextRequest) {
   try {
-    // Get authorization header
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'Authorization header required' },
-        { status: 401 }
-      )
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const token = authHeader.substring(7)
-    const payload = verifyAccessToken(token)
+    const body = await request.json();
+    const validatedData = VideoSubmissionSchema.parse(body);
 
-    if (!payload) {
+    // Check if user has reached daily submission limit (10 submissions per day)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const todaySubmissions = await prisma.videoSubmission.count({
+      where: {
+        userId: session.user.id,
+        createdAt: {
+          gte: today,
+          lt: tomorrow,
+        },
+      },
+    });
+
+    if (todaySubmissions >= 10) {
       return NextResponse.json(
-        { error: 'Invalid or expired token' },
-        { status: 401 }
-      )
+        { error: 'Daily submission limit reached (10 submissions per day)' },
+        { status: 429 }
+      );
     }
 
-    // Parse form data
-    const formData = await request.formData()
-    const video = formData.get('video') as File
-    const gpsLat = parseFloat(formData.get('gpsLat') as string)
-    const gpsLng = parseFloat(formData.get('gpsLng') as string)
-    const recordedAt = formData.get('recordedAt') as string
-    const deviceHash = formData.get('deviceHash') as string
-    const durationS = parseInt(formData.get('durationS') as string) || 0
-    const sizeBytes = parseInt(formData.get('sizeBytes') as string) || 0
+    // Find nearest bin location
+    const binLocations = await prisma.binLocation.findMany({
+      where: { active: true },
+    });
 
-    // Validate input
-    const validationResult = submissionSchema.safeParse({
-      gpsLat,
-      gpsLng,
-      recordedAt,
-      deviceHash,
-      durationS,
-      sizeBytes
-    })
+    let nearestBin = null;
+    let minDistance = Infinity;
 
-    if (!validationResult.success) {
-      return NextResponse.json(
-        { error: 'Invalid input data', details: validationResult.error.errors },
-        { status: 400 }
-      )
+    for (const bin of binLocations) {
+      const distance = calculateDistance(
+        validatedData.gpsLat,
+        validatedData.gpsLng,
+        bin.lat,
+        bin.lng
+      );
+      
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearestBin = bin;
+      }
     }
 
-    if (!video) {
-      return NextResponse.json(
-        { error: 'Video file is required' },
-        { status: 400 }
-      )
+    // Check if within any bin's radius
+    const isWithinBinRadius = nearestBin && minDistance <= nearestBin.radiusM;
+
+    // Check for duplicate videos (basic hash check)
+    const recentSubmissions = await prisma.videoSubmission.findMany({
+      where: {
+        userId: session.user.id,
+        createdAt: {
+          gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
+
+    const isDuplicate = recentSubmissions.some(
+      submission => submission.deviceHash === validatedData.deviceHash
+    );
+
+    // Calculate time difference
+    const recordedTime = new Date(validatedData.recordedAt);
+    const timeDiff = Date.now() - recordedTime.getTime();
+
+    // Calculate auto-verification score
+    const autoScore = calculateAutoScore(
+      minDistance,
+      validatedData.duration,
+      validatedData.sizeBytes,
+      isDuplicate,
+      timeDiff
+    );
+
+    // Determine submission status based on score
+    let status = 'QUEUED';
+    if (autoScore >= 80) {
+      status = 'AUTO_VERIFIED';
+    } else if (autoScore >= 50) {
+      status = 'NEEDS_REVIEW';
+    } else {
+      status = 'REJECTED';
     }
 
-    // Validate video file
-    if (!video.type.startsWith('video/')) {
-      return NextResponse.json(
-        { error: 'Invalid file type. Only video files are allowed.' },
-        { status: 400 }
-      )
-    }
-
-    const maxSize = 100 * 1024 * 1024 // 100MB
-    if (video.size > maxSize) {
-      return NextResponse.json(
-        { error: 'File size too large. Maximum size is 100MB.' },
-        { status: 400 }
-      )
-    }
-
-    // For now, we'll use a placeholder S3 key
-    // In a real implementation, you'd upload to S3 here
-    const s3Key = `videos/${payload.userId}/${Date.now()}-${video.name}`
-    const thumbKey = `thumbnails/${payload.userId}/${Date.now()}-thumb.jpg`
-
-    // Create submission with initial status
+    // Create video submission
     const submission = await prisma.videoSubmission.create({
       data: {
-        userId: payload.userId,
-        s3Key,
-        thumbKey,
-        durationS,
-        sizeBytes: BigInt(sizeBytes),
-        deviceHash,
-        gpsLat,
-        gpsLng,
-        recordedAt: new Date(recordedAt),
-        status: 'QUEUED',
-        autoScore: null,
-        binIdGuess: null,
-        rejectionReason: null
-      }
-    })
+        userId: session.user.id,
+        s3Key: validatedData.s3Key,
+        durationS: validatedData.duration,
+        sizeBytes: BigInt(validatedData.sizeBytes),
+        deviceHash: validatedData.deviceHash,
+        gpsLat: validatedData.gpsLat,
+        gpsLng: validatedData.gpsLng,
+        recordedAt: recordedTime,
+        binIdGuess: nearestBin?.id,
+        autoScore,
+        status: status as any,
+        rejectionReason: status === 'REJECTED' ? 'Auto-rejected due to low score' : null,
+      },
+    });
 
     // Create submission event
     await prisma.submissionEvent.create({
       data: {
         submissionId: submission.id,
-        actorId: payload.userId,
+        actorId: session.user.id,
         eventType: 'CREATED',
         meta: {
-          fileSize: sizeBytes,
-          duration: durationS,
-          deviceHash,
-          gpsCoordinates: { lat: gpsLat, lng: gpsLng }
-        }
-      }
-    })
+          autoScore,
+          gpsDistance: minDistance,
+          nearestBin: nearestBin?.name,
+          isWithinBinRadius,
+          isDuplicate,
+          timeDiff,
+        },
+      },
+    });
 
-    // TODO: Add video to processing queue
-    // This would trigger the video processing pipeline
-    // For now, we'll simulate immediate processing
+    // If auto-verified, credit points immediately
+    if (status === 'AUTO_VERIFIED') {
+      const pointsEarned = 100; // Base points for auto-verified submission
+      
+      await prisma.userWallet.update({
+        where: { userId: session.user.id },
+        data: {
+          pointsBalance: { increment: pointsEarned },
+        },
+      });
 
-    // Simulate video processing and scoring
-    setTimeout(async () => {
-      try {
-        const validationResult = await VideoProcessor.validateSubmission({
-          gpsLat,
-          gpsLng,
-          recordedAt: new Date(recordedAt),
-          deviceHash,
-          durationS,
-          s3Key
-        }, payload.userId)
+      await prisma.submissionEvent.create({
+        data: {
+          submissionId: submission.id,
+          actorId: session.user.id,
+          eventType: 'AUTO_VERIFIED',
+          meta: {
+            pointsEarned,
+            autoScore,
+          },
+        },
+      });
+    }
 
-        const status = VideoProcessor.determineStatus(validationResult.score.totalScore)
-
-        await prisma.videoSubmission.update({
-          where: { id: submission.id },
-          data: {
-            status,
-            autoScore: validationResult.score.totalScore,
-            binIdGuess: null // TODO: Implement bin location matching
-          }
-        })
-
-        // Create status event
-        await prisma.submissionEvent.create({
-          data: {
-            submissionId: submission.id,
-            actorId: payload.userId,
-            eventType: status === 'AUTO_VERIFIED' ? 'AUTO_VERIFIED' : 'NEEDS_REVIEW',
-            meta: {
-              score: validationResult.score,
-              status,
-              validationResult
-            }
-          }
-        })
-
-        // If auto-approved, award points
-        if (status === 'AUTO_VERIFIED') {
-          const pointsToAward = VideoProcessor.getPointsForApproval()
-          
-          await prisma.userWallet.update({
-            where: { userId: payload.userId },
-            data: {
-              pointsBalance: {
-                increment: pointsToAward
-              }
-            }
-          })
-
-          await prisma.submissionEvent.create({
-            data: {
-              submissionId: submission.id,
-              actorId: payload.userId,
-              eventType: 'APPROVED',
-              meta: {
-                pointsAwarded: pointsToAward,
-                autoApproved: true
-              }
-            }
-          })
-        }
-
-      } catch (error) {
-        console.error('Error processing submission:', error)
-        
-        // Update submission to failed status
-        await prisma.videoSubmission.update({
-          where: { id: submission.id },
-          data: {
-            status: 'REJECTED',
-            rejectionReason: 'Processing failed'
-          }
-        })
-      }
-    }, 2000) // Simulate 2 second processing time
+    // Add job to processing queue for thumbnail generation and further analysis
+    await videoProcessingQueue.add('process-video', {
+      submissionId: submission.id,
+      s3Key: validatedData.s3Key,
+      userId: session.user.id,
+    }, {
+      delay: 1000, // 1 second delay
+    });
 
     return NextResponse.json({
       success: true,
       submission: {
         id: submission.id,
         status: submission.status,
-        message: 'Video submitted successfully and queued for processing'
-      }
-    }, { status: 201 })
-
+        autoScore: submission.autoScore,
+        pointsEarned: status === 'AUTO_VERIFIED' ? 100 : 0,
+        estimatedReviewTime: status === 'NEEDS_REVIEW' ? '24-48 hours' : null,
+      },
+    }, { status: 201 });
   } catch (error) {
-    console.error('Create submission error:', error)
+    console.error('Video submission error:', error);
+    
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: 'Invalid input data', details: error.errors },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
-    )
+    );
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    // Get authorization header
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'Authorization header required' },
-        { status: 401 }
-      )
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const token = authHeader.substring(7)
-    const payload = verifyAccessToken(token)
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get('status');
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const offset = (page - 1) * limit;
 
-    if (!payload) {
-      return NextResponse.json(
-        { error: 'Invalid or expired token' },
-        { status: 401 }
-      )
+    const where: any = { userId: session.user.id };
+    if (status) {
+      where.status = status;
     }
 
-    // Get query parameters
-    const { searchParams } = new URL(request.url)
-    const status = searchParams.get('status')
-    const page = parseInt(searchParams.get('page') || '1')
-    const limit = parseInt(searchParams.get('limit') || '10')
-    const offset = (page - 1) * limit
-
-    // Build where clause
-    const where: any = { userId: payload.userId }
-    if (status && status !== 'all') {
-      where.status = status
-    }
-
-    // Get submissions with pagination
     const [submissions, total] = await Promise.all([
       prisma.videoSubmission.findMany({
         where,
         include: {
-          binLocation: {
-            select: {
-              name: true,
-              lat: true,
-              lng: true
-            }
-          }
+          binLocation: true,
+          events: {
+            orderBy: { createdAt: 'desc' },
+            take: 5,
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: offset,
-        take: limit
+        take: limit,
       }),
-      prisma.videoSubmission.count({ where })
-    ])
-
-    const totalPages = Math.ceil(total / limit)
+      prisma.videoSubmission.count({ where }),
+    ]);
 
     return NextResponse.json({
-      success: true,
-      data: submissions.map(submission => ({
-        id: submission.id,
-        status: submission.status,
-        s3Key: submission.s3Key,
-        thumbKey: submission.thumbKey,
-        durationS: submission.durationS,
-        sizeBytes: submission.sizeBytes.toString(),
-        deviceHash: submission.deviceHash,
-        gpsLat: submission.gpsLat,
-        gpsLng: submission.gpsLng,
-        recordedAt: submission.recordedAt,
-        binLocation: submission.binLocation,
-        autoScore: submission.autoScore,
-        rejectionReason: submission.rejectionReason,
-        createdAt: submission.createdAt,
-        updatedAt: submission.updatedAt
+      submissions: submissions.map(submission => ({
+        ...submission,
+        sizeBytes: Number(submission.sizeBytes),
       })),
       pagination: {
         page,
         limit,
         total,
-        totalPages
-      }
-    })
-
+        pages: Math.ceil(total / limit),
+      },
+    });
   } catch (error) {
-    console.error('Get submissions error:', error)
+    console.error('Get submissions error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
-    )
+    );
   }
 }

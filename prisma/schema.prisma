@@ -183,6 +183,10 @@ enum PayoutMethod {
   PAYPAL
   STRIPE
   CASH
+  UPI
+  RAZORPAY
+  PAYTM
+  PHONEPE
 }
 
 enum CashoutStatus {
@@ -197,6 +201,10 @@ enum PaymentGateway {
   STRIPE
   PAYPAL
   BANK
+  RAZORPAY
+  PAYTM
+  PHONEPE
+  UPI
 }
 
 enum PayoutStatus {
