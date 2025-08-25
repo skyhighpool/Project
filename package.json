@@ -53,5 +53,21 @@
     "eslint": "^8",
     "eslint-config-next": "14.0.4",
     "tsx": "^4.6.2"
-  }
+  },
+  "description": "A comprehensive video submission and verification system for waste management, built with Next.js, TypeScript, and PostgreSQL.",
+  "main": "next.config.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/skyhighpool/Project.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/skyhighpool/Project/issues"
+  },
+  "homepage": "https://github.com/skyhighpool/Project#readme"
 }

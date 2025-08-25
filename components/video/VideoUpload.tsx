@@ -130,21 +130,52 @@ export function VideoUpload({ onSuccess }: VideoUploadProps) {
         })
       }, 200)
 
-      // Create form data
-      const formData = new FormData()
-      formData.append('video', selectedFile)
-      formData.append('gpsLat', data.gpsLat.toString())
-      formData.append('gpsLng', data.gpsLng.toString())
-      formData.append('recordedAt', data.recordedAt)
-      formData.append('deviceHash', data.deviceHash)
-
+      // Presign upload URL
       const token = localStorage.getItem('accessToken')
-      const response = await fetch('/api/submissions', {
+      const presignResp = await fetch('/api/uploads/presign', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
         },
-        body: formData
+        body: JSON.stringify({ fileName: selectedFile.name, contentType: selectedFile.type })
+      })
+      if (!presignResp.ok) {
+        clearInterval(progressInterval)
+        const err = await presignResp.json()
+        setError(err.error || 'Failed to get upload URL')
+        return
+      }
+      const { url, key } = await presignResp.json()
+
+      // Upload to S3 via PUT
+      const putResp = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': selectedFile.type },
+        body: selectedFile
+      })
+      if (!putResp.ok) {
+        clearInterval(progressInterval)
+        setError('Upload to storage failed')
+        return
+      }
+
+      // Notify backend to create submission from S3
+      const response = await fetch('/api/submissions/from-s3', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          s3Key: key,
+          gpsLat: data.gpsLat,
+          gpsLng: data.gpsLng,
+          recordedAt: data.recordedAt,
+          deviceHash: data.deviceHash,
+          durationS: Math.round((selectedFile as any).duration || 10),
+          sizeBytes: selectedFile.size
+        })
       })
 
       clearInterval(progressInterval)
